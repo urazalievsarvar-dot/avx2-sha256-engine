@@ -1,12 +1,15 @@
-name: Build Windows AVX2
+name: Build 028 Windows MSVC
 
 on:
   push:
-    branches: [ "main", "основной" ]
+    branches:
+      - main
+      - основной
   workflow_dispatch:
 
 jobs:
   build:
+    name: Build and validate
     runs-on: windows-latest
 
     steps:
@@ -16,19 +19,111 @@ jobs:
       - name: Setup MSVC
         uses: ilammy/msvc-dev-cmd@v1
 
-      - name: Compile
+      - name: Create output directory
+        shell: powershell
+        run: |
+          New-Item -ItemType Directory -Force -Path output | Out-Null
+
+      - name: Record build environment
+        shell: powershell
+        run: |
+          "DEMO V6 BUILD 028 - BUILD ENVIRONMENT" | Out-File output\environment.txt
+          "======================================" | Out-File output\environment.txt -Append
+          "Run date UTC: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')" | Out-File output\environment.txt -Append
+          "Commit: $env:GITHUB_SHA" | Out-File output\environment.txt -Append
+          "Runner OS: $env:RUNNER_OS" | Out-File output\environment.txt -Append
+          "Runner architecture: $env:RUNNER_ARCH" | Out-File output\environment.txt -Append
+          "" | Out-File output\environment.txt -Append
+
+          "CPU INFORMATION" | Out-File output\environment.txt -Append
+          Get-CimInstance Win32_Processor |
+            Select-Object Name, Manufacturer, NumberOfCores,
+              NumberOfLogicalProcessors, MaxClockSpeed |
+            Format-List |
+            Out-String |
+            Out-File output\environment.txt -Append
+
+          "OPERATING SYSTEM" | Out-File output\environment.txt -Append
+          Get-CimInstance Win32_OperatingSystem |
+            Select-Object Caption, Version, OSArchitecture |
+            Format-List |
+            Out-String |
+            Out-File output\environment.txt -Append
+
+      - name: Compile Release AVX2
         shell: cmd
         run: |
-          cl /O2 /EHsc /arch:AVX2 demo_v6_main.cpp /Fe:demo_v6.exe
+          cl /nologo /O2 /Ob3 /Oi /Ot /GL /EHsc /std:c++17 /arch:AVX2 ^
+          demo_v6_main.cpp ^
+          /Fe:output\Build028.exe ^
+          /link /LTCG
 
-      - name: Run executable
-        shell: cmd
+      - name: Run executable and save benchmark
+        shell: powershell
         run: |
-          demo_v6.exe
+          $ErrorActionPreference = "Stop"
 
-      - name: Upload executable
+          Push-Location output
+          .\Build028.exe 2>&1 |
+            Tee-Object -FilePath benchmark.txt
+
+          if ($LASTEXITCODE -ne 0) {
+            throw "Build028.exe returned exit code $LASTEXITCODE"
+          }
+          Pop-Location
+
+      - name: Verify executable exists
+        shell: powershell
+        run: |
+          if (!(Test-Path "output\Build028.exe")) {
+            throw "Build028.exe was not created."
+          }
+
+          $size = (Get-Item "output\Build028.exe").Length
+          if ($size -le 0) {
+            throw "Build028.exe is empty."
+          }
+
+          "Executable size: $size bytes" |
+            Out-File output\verification.txt
+
+      - name: Generate SHA256 checksums
+        shell: powershell
+        run: |
+          Get-FileHash output\Build028.exe -Algorithm SHA256 |
+            Format-List |
+            Out-String |
+            Out-File output\SHA256SUMS.txt
+
+          Get-FileHash output\benchmark.txt -Algorithm SHA256 |
+            Format-List |
+            Out-String |
+            Out-File output\SHA256SUMS.txt -Append
+
+      - name: Copy source and workflow
+        shell: powershell
+        run: |
+          Copy-Item demo_v6_main.cpp output\demo_v6_main.cpp
+          Copy-Item .github\workflows\build.yml output\build.yml
+
+          if (Test-Path README.md) {
+            Copy-Item README.md output\README.md
+          }
+
+      - name: Create release archive
+        shell: powershell
+        run: |
+          Compress-Archive `
+            -Path output\* `
+            -DestinationPath Build028-Windows-MSVC.zip `
+            -Force
+
+      - name: Upload Build 028 package
         uses: actions/upload-artifact@v4
         with:
-          name: Build028-Windows
+          name: Build028-Windows-MSVC
           path: |
-            demo_v6.exe
+            Build028-Windows-MSVC.zip
+            output/
+          retention-days: 30
+          if-no-files-found: error
