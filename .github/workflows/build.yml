@@ -1,0 +1,34 @@
+name: Build Windows AVX2
+
+on:
+  push:
+    branches: [ "main", "основной" ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Setup MSVC
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Compile
+        shell: cmd
+        run: |
+          cl /O2 /EHsc /arch:AVX2 demo_v6_main.cpp /Fe:demo_v6.exe
+
+      - name: Run executable
+        shell: cmd
+        run: |
+          demo_v6.exe
+
+      - name: Upload executable
+        uses: actions/upload-artifact@v4
+        with:
+          name: Build028-Windows
+          path: |
+            demo_v6.exe
